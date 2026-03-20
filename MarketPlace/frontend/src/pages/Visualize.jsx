@@ -4,6 +4,7 @@ export default function Visualize({
   agentId,
   credits,
   lastPseudonym,
+  description,
   pseudonymsByService,
 }) {
   const services = Object.entries(pseudonymsByService);
@@ -11,9 +12,14 @@ export default function Visualize({
   return (
     <div className="space-y-6">
       <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-        <AgentInfo agentId={agentId} credits={credits} lastPseudonym={lastPseudonym} />
+        <AgentInfo
+          agentId={agentId}
+          credits={credits}
+          lastPseudonym={lastPseudonym}
+          description={description}
+        />
 
-        <section className="rounded-xl border border-white/10 bg-[rgba(17,24,39,0.7)] p-5 backdrop-blur-xl">
+        <section className="rounded-xl border border-white/10 bg-[#111827]/80 p-5 backdrop-blur-xl">
           <h2 className="text-lg font-semibold text-slate-100">Identity Graph View</h2>
           <p className="mt-2 text-sm text-slate-400">
             Agent identity stays stable while pseudonyms rotate per tool/service.
@@ -26,12 +32,12 @@ export default function Visualize({
         </section>
       </div>
 
-      <section className="rounded-xl border border-white/10 bg-[rgba(17,24,39,0.7)] p-5 backdrop-blur-xl">
+      <section className="rounded-xl border border-white/10 bg-[#111827]/80 p-5 backdrop-blur-xl">
         <h3 className="mb-4 text-sm font-semibold text-slate-100">Pseudonyms Per Service</h3>
 
         {!services.length ? (
           <p className="rounded-lg border border-violet-400/20 bg-violet-500/5 p-4 text-sm text-violet-200">
-            No pseudonyms generated yet. Use tools in Marketplace or AI Interface.
+            No pseudonyms generated yet. Use skills in Marketplace or AI Interface.
           </p>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">

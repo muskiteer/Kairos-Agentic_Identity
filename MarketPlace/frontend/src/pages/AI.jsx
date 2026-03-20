@@ -1,36 +1,28 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AgentInfo from "../components/AgentInfo";
 import ChatBox from "../components/ChatBox";
+import { fetchSkills, rankSkills } from "../lib/skills";
 
-function detectIntent(text) {
-  const q = text.toLowerCase();
-
-  if (q.includes("weather") || q.includes("temperature") || q.includes("climate")) {
-    return { tool: "weather_api", cost: 1 };
-  }
-  if (q.includes("btc") || q.includes("crypto") || q.includes("eth") || q.includes("price")) {
-    return { tool: "crypto_api", cost: 1 };
-  }
-  if (q.includes("qr") || q.includes("qrcode")) {
-    return { tool: "qr_api", cost: 2 };
-  }
-  if (q.includes("research") || q.includes("search")) {
-    return { tool: "research_api", cost: 3 };
-  }
-
-  return null;
-}
-
-export default function AI({ agentId, credits, lastPseudonym, executeTool }) {
+export default function AI({ agentId, credits, lastPseudonym, executeSkill, description }) {
   const [messages, setMessages] = useState([
     {
       id: crypto.randomUUID(),
       role: "assistant",
       content:
-        "AI terminal online. Try: Get weather in Delhi, Get BTC price, or Generate QR for hello.",
+        "AI interface ready. Describe what you want (weather, crypto, QR, research, etc.) and I will route to the best skill based on capability match, trust, cost, and SLA.",
     },
   ]);
   const [sending, setSending] = useState(false);
+  const [skills, setSkills] = useState([]);
+  const [topMatches, setTopMatches] = useState([]);
+
+  useEffect(() => {
+    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+    (async () => {
+      const list = await fetchSkills(API_BASE);
+      setSkills(Array.isArray(list) ? list : []);
+    })();
+  }, []);
 
   const addMessage = (role, content) => {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role, content }]);
@@ -38,16 +30,25 @@ export default function AI({ agentId, credits, lastPseudonym, executeTool }) {
 
   const onSend = async (text) => {
     addMessage("user", text);
-    const intent = detectIntent(text);
+    const ranked = rankSkills(skills, text);
+    const best = ranked?.[0]?.skill;
 
-    if (!intent) {
-      addMessage("assistant", "I could not map that intent. Try weather, crypto, qr, or research.");
+    if (!best) {
+      addMessage("assistant", "No skills available right now. Try Marketplace first.");
       return;
     }
 
+    setTopMatches(ranked.slice(0, 4));
+
     setSending(true);
 
-    const result = await executeTool(intent.tool, { input: text }, intent.cost);
+    if (credits < best.cost) {
+      setSending(false);
+      addMessage("assistant", `Insufficient credits. ${best.label} costs ${best.cost} credits.`);
+      return;
+    }
+
+    const result = await executeSkill(best, { input: text }, best.cost);
 
     if (!result.ok) {
       addMessage("assistant", `Request failed: ${result.error}`);
@@ -57,7 +58,9 @@ export default function AI({ agentId, credits, lastPseudonym, executeTool }) {
 
     addMessage(
       "assistant",
-      `Tool: ${intent.tool}\nPseudonym: ${result.pseudonym}\nResponse: ${JSON.stringify(result.data)}`
+      `Skill: ${best.label} (${best.id})\nPseudonym: ${result.pseudonym}\nResponse: ${JSON.stringify(
+        result.data
+      )}`
     );
 
     setSending(false);
@@ -66,17 +69,28 @@ export default function AI({ agentId, credits, lastPseudonym, executeTool }) {
   return (
     <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
       <div className="space-y-4">
-        <AgentInfo agentId={agentId} credits={credits} lastPseudonym={lastPseudonym} />
+        <AgentInfo
+          agentId={agentId}
+          credits={credits}
+          lastPseudonym={lastPseudonym}
+          description={description}
+        />
 
-        <section className="rounded-xl border border-white/10 bg-[rgba(17,24,39,0.7)] p-4 backdrop-blur-xl">
-          <h3 className="mb-3 text-sm font-semibold text-slate-100">Intent Routing</h3>
-          <ul className="space-y-2 text-xs text-slate-400">
-            <li><span className="text-emerald-300">weather</span> → /tools/weather_api (1)</li>
-            <li><span className="text-sky-300">crypto</span> → /tools/crypto_api (1)</li>
-            <li><span className="text-violet-300">qr</span> → /tools/qr_api (2)</li>
-            <li><span className="text-amber-300">research</span> → /tools/research_api (3)</li>
-          </ul>
-        </section>
+        {topMatches?.length ? (
+          <section className="rounded-xl border border-white/10 bg-[#111827]/80 p-4 backdrop-blur-xl">
+            <h3 className="mb-3 text-sm font-semibold text-slate-100">Skill Ranking</h3>
+            <ul className="space-y-2 text-xs text-slate-400">
+              {topMatches.map(({ skill, score }) => (
+                <li key={skill.id} className="flex items-center justify-between gap-3">
+                  <span className="truncate">{skill.label}</span>
+                  <span className="text-slate-500">
+                    {skill.cost}cr · {score.toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </div>
 
       <ChatBox messages={messages} onSend={onSend} sending={sending} />

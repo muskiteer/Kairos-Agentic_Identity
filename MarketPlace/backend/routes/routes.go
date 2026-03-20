@@ -19,7 +19,11 @@ func SetupRoutes(mux *http.ServeMux, db *mongo.Database) {
 	mux.HandleFunc("GET /tools", handler.ToolFetchHandler(db))
 	mux.HandleFunc("POST /tools/{tool}", handler.ToolHandler(db))
 
-	// Skill marketplace
+	// Skill marketplace (dynamic manifests + protocol envelope)
+	mux.HandleFunc("GET /skills", handler.SkillsListHandler(db))
+	mux.HandleFunc("POST /skills/{skill}", handler.SkillsExecuteHandler(db))
+
+	
 	mux.HandleFunc("POST /agent/skills", handler.RegisterSkillsHandler(db))
 	mux.HandleFunc("GET /agent/skills", handler.DiscoverSkillsHandler(db))
 
@@ -29,7 +33,6 @@ func SetupRoutes(mux *http.ServeMux, db *mongo.Database) {
 	mux.HandleFunc("POST /agent/respond", handler.RespondToRequestHandler(db))
 	mux.HandleFunc("GET /agent/responses", handler.GetResponsesHandler(db))
 
-	// Compatibility aliases for older frontend paths.
 	mux.HandleFunc("/api/register", handler.AgentRegisterHandler(db))
 	mux.HandleFunc("/api/tools", handler.ToolFetchHandler(db))
 	mux.HandleFunc("/api/tool/{tool}", handler.ToolHandler(db))

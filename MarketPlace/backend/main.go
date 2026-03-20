@@ -11,6 +11,7 @@ import (
 
 	"github.com/muskiteer/Kairos-Agentic_Identity/MarketPlace/internal"
 	"github.com/muskiteer/Kairos-Agentic_Identity/MarketPlace/routes"
+	"github.com/muskiteer/Kairos-Agentic_Identity/MarketPlace/handler"
 )
 
 func main() {
@@ -19,6 +20,9 @@ func main() {
 		log.Fatalf("database setup failed: %v", err)
 	}
 	defer db.Client.Disconnect(context.Background())
+
+	// Seed demo marketplace data (provider agents + published skill manifests).
+	handler.SeedDemoData(db.DB)
 
 	mux := http.NewServeMux()
 	routes.SetupRoutes(mux, db.DB)

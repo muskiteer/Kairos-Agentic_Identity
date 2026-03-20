@@ -16,6 +16,9 @@ import (
 type Agent struct {
 	AgentID   string `bson:"agent_id" json:"agent_id"`
 	PublicKey string `bson:"public_key" json:"public_key"`
+	Description string `bson:"description,omitempty" json:"description,omitempty"`
+	Role        string `bson:"role,omitempty" json:"role,omitempty"` // "user" or "provider" (demo)
+	AllowedSkills []string `bson:"allowed_skills,omitempty" json:"allowed_skills,omitempty"`
 	Credits   int    `bson:"credits" json:"credits"`
 }
 
@@ -48,6 +51,9 @@ type ExecutionResponse struct {
 type registerAgentRequest struct {
 	AgentID   string `json:"agent_id"`
 	PublicKey string `json:"public_key"`
+	Description string   `json:"description,omitempty"`
+	Role        string   `json:"role,omitempty"`
+	AllowedSkills []string `json:"allowed_skills,omitempty"`
 }
 
 type registerSkillsRequest struct {
@@ -85,9 +91,12 @@ func AgentRegisterHandler(db *mongo.Database) http.HandlerFunc {
 
 		req.AgentID = strings.TrimSpace(req.AgentID)
 		req.PublicKey = strings.TrimSpace(req.PublicKey)
-		if req.AgentID == "" || req.PublicKey == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_id and public_key are required"})
+		if req.AgentID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_id is required"})
 			return
+		}
+		if req.Role == "" {
+			req.Role = "user"
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -99,8 +108,11 @@ func AgentRegisterHandler(db *mongo.Database) http.HandlerFunc {
 			bson.M{"agent_id": req.AgentID},
 			bson.M{
 				"$set": bson.M{
-					"agent_id":   req.AgentID,
-					"public_key": req.PublicKey,
+					"agent_id":       req.AgentID,
+					"public_key":    req.PublicKey,
+					"description":    req.Description,
+					"role":           req.Role,
+					"allowed_skills": req.AllowedSkills,
 				},
 				"$setOnInsert": bson.M{
 					"credits": 100,

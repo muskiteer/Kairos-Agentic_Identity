@@ -13,8 +13,8 @@ export default function ChatBox({ messages, onSend, sending }) {
   };
 
   return (
-    <section className="rounded-xl border border-white/15 bg-[rgba(17,24,39,0.72)] p-4 backdrop-blur-xl">
-      <div className="mb-4 h-[460px] space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-slate-900/60 p-4">
+    <section className="rounded-xl border border-white/15 bg-[#111827]/80 p-4 backdrop-blur-xl">
+      <div className="mb-4 h-[460px] space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-[#0b1222]/60 p-4">
         {messages.map((message) => (
           <ChatMessage key={message.id} role={message.role} content={message.content} />
         ))}

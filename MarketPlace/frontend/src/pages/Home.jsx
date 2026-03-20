@@ -1,7 +1,15 @@
 import { useState } from "react";
 import AgentInfo from "../components/AgentInfo";
 
-export default function Home({ agentId, credits, lastPseudonym, createAgent, loadAgent }) {
+export default function Home({
+  agentId,
+  credits,
+  lastPseudonym,
+  createAgent,
+  loadAgent,
+  agentDescription,
+  setAgentDescription,
+}) {
   const [existingId, setExistingId] = useState("");
 
   const submitLoad = (event) => {
@@ -13,7 +21,7 @@ export default function Home({ agentId, credits, lastPseudonym, createAgent, loa
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-      <section className="rounded-xl border border-white/10 bg-[rgba(17,24,39,0.72)] p-8 backdrop-blur-xl">
+      <section className="rounded-xl border border-white/10 bg-[#111827]/80 p-8 backdrop-blur-xl">
         <p className="mb-3 text-xs uppercase tracking-[0.24em] text-sky-300">Neural Identity Layer</p>
         <h2 className="text-4xl font-bold text-slate-100">Agentic Identity Marketplace</h2>
         <p className="mt-4 text-slate-400">
@@ -28,6 +36,17 @@ export default function Home({ agentId, credits, lastPseudonym, createAgent, loa
           >
             Create Agent
           </button>
+        </div>
+
+        <div className="mt-5">
+          <p className="mb-2 text-xs text-slate-400">Agent Description</p>
+          <textarea
+            value={agentDescription}
+            onChange={(e) => setAgentDescription(e.target.value)}
+            placeholder="e.g., Weather analyst agent with reliable forecasts (demo)"
+            rows={3}
+            className="w-full rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-[#38bdf8]"
+          />
         </div>
 
         <form onSubmit={submitLoad} className="mt-4 flex gap-2">
@@ -51,7 +70,12 @@ export default function Home({ agentId, credits, lastPseudonym, createAgent, loa
         </div>
       </section>
 
-      <AgentInfo agentId={agentId} credits={credits} lastPseudonym={lastPseudonym} />
+      <AgentInfo
+        agentId={agentId}
+        credits={credits}
+        lastPseudonym={lastPseudonym}
+        description={agentDescription}
+      />
     </div>
   );
 }
