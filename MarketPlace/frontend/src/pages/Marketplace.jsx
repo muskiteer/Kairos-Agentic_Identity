@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import ToolCard from "../components/ToolCard";
 import AgentInfo from "../components/AgentInfo";
 import { fetchSkills } from "../lib/skills";
+import { getApiBaseUrl } from "../lib/api";
 
 export default function Marketplace({
   agentId,
@@ -16,7 +17,7 @@ export default function Marketplace({
   const [output, setOutput] = useState("Use a tool to see API output.");
 
   useEffect(() => {
-    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+    const API_BASE = getApiBaseUrl();
     (async () => {
       const list = await fetchSkills(API_BASE);
       setSkills(Array.isArray(list) ? list : []);

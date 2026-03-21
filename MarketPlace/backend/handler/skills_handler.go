@@ -12,6 +12,7 @@ import (
 	"time"
 
 	agentid "agentid-sdk"
+
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 )
@@ -78,19 +79,18 @@ func computeNonceReplayKey(fromAgent, nonce string) bson.M {
 func writeAuditRejection(ctx context.Context, db *mongo.Database, reasonCode string, req SkillExecutionRequest, skillID string) {
 	fromAgent := strings.TrimSpace(req.Protocol.FromAgent)
 	_, _ = db.Collection("audit_logs").InsertOne(ctx, bson.M{
-		"status":       "rejected",
-		"reason_code":  reasonCode,
-		"request_id":   strings.TrimSpace(req.Protocol.RequestID),
-		"trace_id":     strings.TrimSpace(req.Protocol.TraceID),
-		"from_agent":   fromAgent,
-		"to_agent":     strings.TrimSpace(req.Protocol.ToAgent),
-		"skill_id":     skillID,
+		"status":         "rejected",
+		"reason_code":    reasonCode,
+		"request_id":     strings.TrimSpace(req.Protocol.RequestID),
+		"trace_id":       strings.TrimSpace(req.Protocol.TraceID),
+		"from_agent":     fromAgent,
+		"to_agent":       strings.TrimSpace(req.Protocol.ToAgent),
+		"skill_id":       skillID,
 		"schema_version": strings.TrimSpace(req.Protocol.SchemaVer),
-		"nonce":        strings.TrimSpace(req.Protocol.Nonce),
-		"created_at":   time.Now().UTC(),
+		"nonce":          strings.TrimSpace(req.Protocol.Nonce),
+		"created_at":     time.Now().UTC(),
 	})
 }
-
 
 // ProtocolEnvelope is the typed subset we store for auditability.
 // The frontend sends a richer envelope; we persist what we can.
@@ -378,6 +378,72 @@ func SkillsExecuteHandler(db *mongo.Database) http.HandlerFunc {
 			return
 		}
 
+		// Marketplace settlement: requester pays provider on successful execution.
+		transactionID := ""
+		if fromAgent != toAgent {
+			agentsColl := db.Collection("agents")
+			debitResult, err := agentsColl.UpdateOne(ctx,
+				bson.M{"agent_id": fromAgent, "credits": bson.M{"$gte": manifestDoc.Price}},
+				bson.M{"$inc": bson.M{"credits": -manifestDoc.Price}},
+			)
+			if err != nil {
+				writeAuditRejection(ctx, db, "payment_failed", req, skillID)
+				_, _ = db.Collection("execution_requests").UpdateOne(ctx, bson.M{"request_id": requestID}, bson.M{"$set": bson.M{"status": "rejected"}})
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to debit requester credits", "reason_code": "payment_failed"})
+				return
+			}
+			if debitResult.MatchedCount == 0 || debitResult.ModifiedCount == 0 {
+				writeAuditRejection(ctx, db, "insufficient_credits", req, skillID)
+				_, _ = db.Collection("execution_requests").UpdateOne(ctx, bson.M{"request_id": requestID}, bson.M{"$set": bson.M{"status": "rejected"}})
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "insufficient credits", "reason_code": "insufficient_credits"})
+				return
+			}
+
+			creditResult, err := agentsColl.UpdateOne(
+				ctx,
+				bson.M{"agent_id": toAgent},
+				bson.M{"$inc": bson.M{"credits": manifestDoc.Price}},
+			)
+			if err != nil || creditResult.MatchedCount == 0 {
+				_, _ = agentsColl.UpdateOne(ctx,
+					bson.M{"agent_id": fromAgent},
+					bson.M{"$inc": bson.M{"credits": manifestDoc.Price}},
+				)
+				writeAuditRejection(ctx, db, "payment_failed", req, skillID)
+				_, _ = db.Collection("execution_requests").UpdateOne(ctx, bson.M{"request_id": requestID}, bson.M{"$set": bson.M{"status": "rejected"}})
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to credit provider", "reason_code": "payment_failed"})
+				return
+			}
+
+			transactionID = fmt.Sprintf("txn_%s", bson.NewObjectID().Hex())
+			_, err = db.Collection("transactions").InsertOne(ctx, CreditTransaction{
+				TransactionID: transactionID,
+				RequestID:     requestID,
+				Skill:         skillID,
+				FromAgent:     fromAgent,
+				ToAgent:       toAgent,
+				Amount:        manifestDoc.Price,
+				Currency:      "CREDITS",
+				Status:        "completed",
+				CreatedAt:     time.Now().UTC(),
+			})
+			if err != nil {
+				// Keep balances consistent if transaction persistence fails.
+				_, _ = agentsColl.UpdateOne(ctx,
+					bson.M{"agent_id": toAgent},
+					bson.M{"$inc": bson.M{"credits": -manifestDoc.Price}},
+				)
+				_, _ = agentsColl.UpdateOne(ctx,
+					bson.M{"agent_id": fromAgent},
+					bson.M{"$inc": bson.M{"credits": manifestDoc.Price}},
+				)
+				writeAuditRejection(ctx, db, "payment_failed", req, skillID)
+				_, _ = db.Collection("execution_requests").UpdateOne(ctx, bson.M{"request_id": requestID}, bson.M{"$set": bson.M{"status": "rejected"}})
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record transaction", "reason_code": "payment_failed"})
+				return
+			}
+		}
+
 		_, _ = db.Collection("execution_results").InsertOne(ctx, bson.M{
 			"request_id": requestID,
 			"from_agent": fromAgent,
@@ -391,6 +457,8 @@ func SkillsExecuteHandler(db *mongo.Database) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"skill_id":          skillID,
 			"provider_agent_id": manifestDoc.ProviderAgentID,
+			"price":             manifestDoc.Price,
+			"transaction_id":    transactionID,
 			"pseudonym":         req.Pseudonym,
 			"status":            "completed",
 			"manifest_version":  manifestDoc.Manifest.Version,

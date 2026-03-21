@@ -5,5 +5,27 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    proxy: {
+      "/health": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/agent": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/skills": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/tools": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/api": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+    },
   },
 });

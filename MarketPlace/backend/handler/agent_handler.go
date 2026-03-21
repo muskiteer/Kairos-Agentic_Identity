@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,12 +15,12 @@ import (
 )
 
 type Agent struct {
-	AgentID   string `bson:"agent_id" json:"agent_id"`
-	PublicKey string `bson:"public_key" json:"public_key"`
-	Description string `bson:"description,omitempty" json:"description,omitempty"`
-	Role        string `bson:"role,omitempty" json:"role,omitempty"` // "user" or "provider" (demo)
+	AgentID       string   `bson:"agent_id" json:"agent_id"`
+	PublicKey     string   `bson:"public_key" json:"public_key"`
+	Description   string   `bson:"description,omitempty" json:"description,omitempty"`
+	Role          string   `bson:"role,omitempty" json:"role,omitempty"` // "user" or "provider" (demo)
 	AllowedSkills []string `bson:"allowed_skills,omitempty" json:"allowed_skills,omitempty"`
-	Credits   int    `bson:"credits" json:"credits"`
+	Credits       int      `bson:"credits" json:"credits"`
 }
 
 type SkillOffer struct {
@@ -48,11 +49,32 @@ type ExecutionResponse struct {
 	CreatedAt time.Time `bson:"created_at" json:"created_at"`
 }
 
+type CreditTransaction struct {
+	TransactionID string    `bson:"transaction_id" json:"transaction_id"`
+	RequestID     string    `bson:"request_id" json:"request_id"`
+	Skill         string    `bson:"skill" json:"skill"`
+	FromAgent     string    `bson:"from_agent" json:"from_agent"`
+	ToAgent       string    `bson:"to_agent" json:"to_agent"`
+	Amount        int       `bson:"amount" json:"amount"`
+	Currency      string    `bson:"currency" json:"currency"`
+	Status        string    `bson:"status" json:"status"`
+	CreatedAt     time.Time `bson:"created_at" json:"created_at"`
+}
+
+type DeveloperSkillSummary struct {
+	SkillID      string   `json:"skill_id"`
+	Price        int      `json:"price"`
+	Reputation   float64  `json:"reputation"`
+	Availability float64  `json:"availability"`
+	LatencyMs    int      `json:"latency_ms"`
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
 type registerAgentRequest struct {
-	AgentID   string `json:"agent_id"`
-	PublicKey string `json:"public_key"`
-	Description string   `json:"description,omitempty"`
-	Role        string   `json:"role,omitempty"`
+	AgentID       string   `json:"agent_id"`
+	PublicKey     string   `json:"public_key"` 		
+	Description   string   `json:"description,omitempty"`
+	Role          string   `json:"role,omitempty"`
 	AllowedSkills []string `json:"allowed_skills,omitempty"`
 }
 
@@ -74,6 +96,76 @@ type respondPayload struct {
 	RequestID string `json:"request_id"`
 	FromAgent string `json:"from_agent"`
 	Result    string `json:"result"`
+}
+
+func deriveCapabilities(skillID string, description string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(skillID+" "+description), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if len(p) < 3 {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return []string{"agent", "service"}
+	}
+	return out
+}
+
+func buildManifestFromSkillRegistration(skillID string, provider Agent, price int) SkillManifestDoc {
+	desc := strings.TrimSpace(provider.Description)
+	if desc == "" {
+		desc = "Agent-provided marketplace skill"
+	}
+
+	latency := 300
+	if price >= 4 {
+		latency = 550
+	} else if price <= 1 {
+		latency = 220
+	}
+
+	return SkillManifestDoc{
+		SkillID:         skillID,
+		ProviderAgentID: provider.AgentID,
+		Price:           price,
+		Manifest: SkillManifest{
+			Name:          skillID,
+			Version:       "v1",
+			SchemaVersion: "1",
+			LatencyMs:     latency,
+			Auth:          map[string]any{"type": "none"},
+			Capabilities:  deriveCapabilities(skillID, desc),
+			Reputation:    0.8,
+			Availability:  0.95,
+			Description:   desc,
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"input": map[string]any{"type": "string"},
+				},
+			},
+			OutputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"result": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}
 }
 
 func AgentRegisterHandler(db *mongo.Database) http.HandlerFunc {
@@ -109,7 +201,7 @@ func AgentRegisterHandler(db *mongo.Database) http.HandlerFunc {
 			bson.M{
 				"$set": bson.M{
 					"agent_id":       req.AgentID,
-					"public_key":    req.PublicKey,
+					"public_key":     req.PublicKey,
 					"description":    req.Description,
 					"role":           req.Role,
 					"allowed_skills": req.AllowedSkills,
@@ -226,6 +318,28 @@ func RegisterSkillsHandler(db *mongo.Database) http.HandlerFunc {
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+
+		// Keep the modern manifest marketplace in sync so frontend cards can execute provider offers.
+		manifestColl := db.Collection("skill_manifests")
+		for _, skillID := range normalizedSkills {
+			doc := buildManifestFromSkillRegistration(skillID, agent, req.Price)
+			_, err := manifestColl.UpdateOne(
+				ctx,
+				bson.M{"skill_id": doc.SkillID, "provider_agent_id": doc.ProviderAgentID},
+				bson.M{"$set": bson.M{
+					"skill_id":          doc.SkillID,
+					"provider_agent_id": doc.ProviderAgentID,
+					"price":             doc.Price,
+					"manifest":          doc.Manifest,
+					"updated_at":        time.Now().UTC(),
+				}},
+				options.UpdateOne().SetUpsert(true),
+			)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to publish skill manifest: " + err.Error()})
+				return
+			}
 		}
 
 		writeJSON(w, http.StatusOK, SkillOffer{AgentID: req.AgentID, Skills: normalizedSkills, Price: req.Price})
@@ -492,10 +606,240 @@ func RespondToRequestHandler(db *mongo.Database) http.HandlerFunc {
 			return
 		}
 
+		txn := CreditTransaction{
+			TransactionID: fmt.Sprintf("txn_%s", bson.NewObjectID().Hex()),
+			RequestID:     req.RequestID,
+			Skill:         executionReq.Skill,
+			FromAgent:     executionReq.FromAgent,
+			ToAgent:       executionReq.ToAgent,
+			Amount:        providerOffer.Price,
+			Currency:      "CREDITS",
+			Status:        "completed",
+			CreatedAt:     time.Now().UTC(),
+		}
+		if _, err := db.Collection("transactions").InsertOne(ctx, txn); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction recorded failed: " + err.Error()})
+			return
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
-			"request_id": req.RequestID,
-			"status":     "completed",
-			"price":      providerOffer.Price,
+			"request_id":     req.RequestID,
+			"status":         "completed",
+			"price":          providerOffer.Price,
+			"transaction_id": txn.TransactionID,
+		})
+	}
+}
+
+func GetTransactionsHandler(db *mongo.Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+		if agentID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_id query parameter is required"})
+			return
+		}
+
+		limit := int64(50)
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= 500 {
+				limit = int64(n)
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		filter := bson.M{
+			"$or": []bson.M{
+				{"from_agent": agentID},
+				{"to_agent": agentID},
+			},
+		}
+		findOpts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(limit)
+		cursor, err := db.Collection("transactions").Find(ctx, filter, findOpts)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		defer cursor.Close(ctx)
+
+		items := make([]CreditTransaction, 0)
+		for cursor.Next(ctx) {
+			var row CreditTransaction
+			if err := cursor.Decode(&row); err != nil {
+				continue
+			}
+			items = append(items, row)
+		}
+
+		writeJSON(w, http.StatusOK, items)
+	}
+}
+
+func GetDeveloperDashboardHandler(db *mongo.Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+		if agentID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_id query parameter is required"})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		defer cancel()
+
+		if err := db.Collection("agents").FindOne(ctx, bson.M{"agent_id": agentID}).Err(); err != nil {
+			if err == mongo.ErrNoDocuments {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		// Payment analytics
+		txFilter := bson.M{
+			"$or": []bson.M{{"from_agent": agentID}, {"to_agent": agentID}},
+		}
+		txCur, err := db.Collection("transactions").Find(ctx, txFilter, options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(30))
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		defer txCur.Close(ctx)
+
+		recentTransactions := make([]CreditTransaction, 0)
+		var earned, spent, txTotal, incomingCount, outgoingCount int
+		for txCur.Next(ctx) {
+			var tx CreditTransaction
+			if err := txCur.Decode(&tx); err != nil {
+				continue
+			}
+			recentTransactions = append(recentTransactions, tx)
+			txTotal += tx.Amount
+			if tx.ToAgent == agentID {
+				earned += tx.Amount
+				incomingCount++
+			}
+			if tx.FromAgent == agentID {
+				spent += tx.Amount
+				outgoingCount++
+			}
+		}
+
+		totalTransactions := incomingCount + outgoingCount
+		averageTxAmount := 0.0
+		if totalTransactions > 0 {
+			averageTxAmount = float64(txTotal) / float64(totalTransactions)
+		}
+
+		// Cost + trust analytics from registered skills
+		skillCur, err := db.Collection("skill_manifests").Find(ctx, bson.M{"provider_agent_id": agentID})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		defer skillCur.Close(ctx)
+
+		skills := make([]DeveloperSkillSummary, 0)
+		priceMin := 0
+		priceMax := 0
+		priceSum := 0
+		reputationSum := 0.0
+		availabilitySum := 0.0
+
+		for skillCur.Next(ctx) {
+			var doc SkillManifestDoc
+			if err := skillCur.Decode(&doc); err != nil {
+				continue
+			}
+
+			skills = append(skills, DeveloperSkillSummary{
+				SkillID:      doc.SkillID,
+				Price:        doc.Price,
+				Reputation:   doc.Manifest.Reputation,
+				Availability: doc.Manifest.Availability,
+				LatencyMs:    doc.Manifest.LatencyMs,
+				Capabilities: doc.Manifest.Capabilities,
+			})
+
+			if len(skills) == 1 {
+				priceMin = doc.Price
+				priceMax = doc.Price
+			} else {
+				if doc.Price < priceMin {
+					priceMin = doc.Price
+				}
+				if doc.Price > priceMax {
+					priceMax = doc.Price
+				}
+			}
+
+			priceSum += doc.Price
+			reputationSum += doc.Manifest.Reputation
+			availabilitySum += doc.Manifest.Availability
+		}
+
+		skillsCount := len(skills)
+		avgPrice := 0.0
+		avgReputation := 0.0
+		avgAvailability := 0.0
+		if skillsCount > 0 {
+			avgPrice = float64(priceSum) / float64(skillsCount)
+			avgReputation = reputationSum / float64(skillsCount)
+			avgAvailability = availabilitySum / float64(skillsCount)
+		}
+
+		completedExec, _ := db.Collection("execution_results").CountDocuments(ctx, bson.M{"to_agent": agentID})
+		rejectedExec, _ := db.Collection("audit_logs").CountDocuments(ctx, bson.M{"to_agent": agentID, "status": "rejected"})
+
+		trustScore := 0.0
+		if avgReputation > 0 || avgAvailability > 0 {
+			trustScore = avgReputation*0.65 + avgAvailability*0.35
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"agent_id": agentID,
+			"payment": map[string]any{
+				"earned":             earned,
+				"spent":              spent,
+				"net":                earned - spent,
+				"incoming_count":     incomingCount,
+				"outgoing_count":     outgoingCount,
+				"total_transactions": totalTransactions,
+				"average_tx_amount":  averageTxAmount,
+			},
+			"trust": map[string]any{
+				"avg_reputation":        avgReputation,
+				"avg_availability":      avgAvailability,
+				"successful_executions": completedExec,
+				"rejected_executions":   rejectedExec,
+				"trust_score":           trustScore,
+			},
+			"cost": map[string]any{
+				"skills_count": skillsCount,
+				"min_price":    priceMin,
+				"max_price":    priceMax,
+				"avg_price":    avgPrice,
+			},
+			"skills":              skills,
+			"recent_transactions": recentTransactions,
+			"prototype_readiness": map[string]any{
+				"identity_registered":     true,
+				"has_skills_published":    skillsCount > 0,
+				"has_tx_history":          totalTransactions > 0,
+				"trust_scoring_available": skillsCount > 0,
+				"recommendation":          "Add goal planner + async queue for multi-agent workflows.",
+			},
 		})
 	}
 }

@@ -43,7 +43,7 @@ export default function ToolCard({ tool, onUse, disabled, loading, insufficient 
             : "border-[#22c55e]/40 bg-[#22c55e]/20 text-[#22c55e] hover:bg-[#22c55e]/30 hover:shadow-[0_0_16px_rgba(34,197,94,0.35)]"
         }`}
       >
-        {loading ? "Processing..." : insufficient ? "Insufficient Credits" : "Use Skill"}
+        {loading ? "Processing..." : insufficient ? "Insufficient Credits" : "Hire Agent Skill"}
       </button>
     </article>
   );

@@ -1,4 +1,4 @@
-import { sign as edSign } from "@noble/ed25519";
+import { signAsync as edSign } from "@noble/ed25519";
 
 function b64FromBytes(bytes) {
   let binary = "";

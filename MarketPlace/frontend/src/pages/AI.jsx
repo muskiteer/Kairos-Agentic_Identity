@@ -2,6 +2,33 @@ import { useEffect, useState } from "react";
 import AgentInfo from "../components/AgentInfo";
 import ChatBox from "../components/ChatBox";
 import { fetchSkills, rankSkills } from "../lib/skills";
+import { getApiBaseUrl } from "../lib/api";
+
+const MIN_SKILL_SCORE = 0.2;
+const GENERAL_FALLBACK_SKILL_ID = "research_api";
+
+function pickSkillForExecution(ranked, skills) {
+  const best = ranked?.[0];
+  const bestSkill = best?.skill;
+  const bestScore = Number(best?.score || 0);
+
+  if (bestSkill && bestScore >= MIN_SKILL_SCORE) {
+    return { skill: bestSkill, reason: "best-match" };
+  }
+
+  const researchSkill = (Array.isArray(skills) ? skills : []).find(
+    (s) => s?.id === GENERAL_FALLBACK_SKILL_ID
+  );
+  if (researchSkill) {
+    return { skill: researchSkill, reason: "general-fallback" };
+  }
+
+  if (bestSkill) {
+    return { skill: bestSkill, reason: "best-available" };
+  }
+
+  return null;
+}
 
 export default function AI({ agentId, credits, lastPseudonym, executeSkill, description }) {
   const [messages, setMessages] = useState([
@@ -9,7 +36,7 @@ export default function AI({ agentId, credits, lastPseudonym, executeSkill, desc
       id: crypto.randomUUID(),
       role: "assistant",
       content:
-        "AI interface ready. Describe what you want (weather, crypto, QR, research, etc.) and I will route to the best skill based on capability match, trust, cost, and SLA.",
+        "AI interface ready. Every request is executed through a marketplace skill. General questions default to research skill.",
     },
   ]);
   const [sending, setSending] = useState(false);
@@ -17,7 +44,7 @@ export default function AI({ agentId, credits, lastPseudonym, executeSkill, desc
   const [topMatches, setTopMatches] = useState([]);
 
   useEffect(() => {
-    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+    const API_BASE = getApiBaseUrl();
     (async () => {
       const list = await fetchSkills(API_BASE);
       setSkills(Array.isArray(list) ? list : []);
@@ -31,34 +58,44 @@ export default function AI({ agentId, credits, lastPseudonym, executeSkill, desc
   const onSend = async (text) => {
     addMessage("user", text);
     const ranked = rankSkills(skills, text);
-    const best = ranked?.[0]?.skill;
-
-    if (!best) {
-      addMessage("assistant", "No skills available right now. Try Marketplace first.");
-      return;
-    }
-
     setTopMatches(ranked.slice(0, 4));
 
     setSending(true);
 
-    if (credits < best.cost) {
+    const selection = pickSkillForExecution(ranked, skills);
+    if (!selection?.skill) {
+      addMessage("assistant", "No skills available to execute this request.");
       setSending(false);
-      addMessage("assistant", `Insufficient credits. ${best.label} costs ${best.cost} credits.`);
       return;
     }
 
-    const result = await executeSkill(best, { input: text }, best.cost);
+    const selected = selection.skill;
+    if (Number(credits || 0) < Number(selected.cost || 0)) {
+      addMessage(
+        "assistant",
+        `${selected.label} requires ${selected.cost} credits, but only ${credits} credits are available.`
+      );
+      setSending(false);
+      return;
+    }
 
+    const result = await executeSkill(selected, { input: text }, selected.cost);
     if (!result.ok) {
-      addMessage("assistant", `Request failed: ${result.error}`);
+      addMessage("assistant", `Skill execution failed: ${result.error}`);
       setSending(false);
       return;
     }
+
+    const note =
+      selection.reason === "general-fallback"
+        ? "(general query → research skill fallback)"
+        : selection.reason === "best-match"
+        ? "(best capability match)"
+        : "(fallback selection)";
 
     addMessage(
       "assistant",
-      `Skill: ${best.label} (${best.id})\nPseudonym: ${result.pseudonym}\nResponse: ${JSON.stringify(
+      `Skill executed: ${selected.label} (${selected.id}) ${note}\nPseudonym: ${result.pseudonym}\nOutput: ${JSON.stringify(
         result.data
       )}`
     );

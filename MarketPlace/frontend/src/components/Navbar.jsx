@@ -5,6 +5,7 @@ const links = [
   { to: "/marketplace", label: "Marketplace" },
   { to: "/visualize", label: "Visualize" },
   { to: "/ai", label: "AI Interface" },
+  { to: "/developer", label: "Developer" },
 ];
 
 export default function Navbar({ credits }) {
