@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"log"
-	"net/url"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
