@@ -12,6 +12,6 @@ export function getApiBaseUrl() {
     return `${protocol}//${hostname}:8080`;
   }
 
-  // Same-origin fallback for deployed setups behind one domain.
-  return "";
+  // Default deployed backend URL.
+  return "https://kairos-agentic-identity.onrender.com";
 }
