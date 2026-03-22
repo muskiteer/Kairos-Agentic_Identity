@@ -16,6 +16,8 @@ export default function Home({
   const [existingId, setExistingId] = useState("");
   const [skillsText, setSkillsText] = useState("weather_api,crypto_api");
   const [skillsPrice, setSkillsPrice] = useState(1);
+  const [skillsEndpoint, setSkillsEndpoint] = useState("");
+  const [skillsInputExample, setSkillsInputExample] = useState('{"input":"example request"}');
   const [skillsStatus, setSkillsStatus] = useState("");
   const [backupStatus, setBackupStatus] = useState("");
   const backupInputRef = useRef(null);
@@ -33,6 +35,8 @@ export default function Home({
     const result = await registerAgentSkills({
       skillsText,
       price: Number(skillsPrice),
+      endpoint: skillsEndpoint,
+      inputExample: skillsInputExample,
     });
     if (!result.ok) {
       setSkillsStatus(`❌ ${result.error}`);
@@ -188,6 +192,29 @@ export default function Home({
                   +
                 </button>
               </div>
+            </div>
+          </div>
+
+          <div className="mt-3 grid gap-3">
+            <div>
+              <p className="mb-1 text-[11px] text-slate-500">Hosted Skill Endpoint (optional)</p>
+              <input
+                value={skillsEndpoint}
+                onChange={(event) => setSkillsEndpoint(event.target.value)}
+                placeholder="https://your-skill-host/api/execute"
+                className="w-full rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-[#38bdf8]"
+              />
+            </div>
+
+            <div>
+              <p className="mb-1 text-[11px] text-slate-500">Input Example (JSON or text)</p>
+              <textarea
+                value={skillsInputExample}
+                onChange={(event) => setSkillsInputExample(event.target.value)}
+                rows={3}
+                placeholder='{"input":"example request"}'
+                className="w-full rounded-lg border border-white/10 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-[#38bdf8]"
+              />
             </div>
           </div>
 

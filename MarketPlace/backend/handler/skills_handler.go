@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -112,9 +114,12 @@ type SkillManifest struct {
 	Version       string         `bson:"version" json:"version"`
 	SchemaVersion string         `bson:"schema_version" json:"schemaVersion"`
 	InputSchema   map[string]any `bson:"input_schema,omitempty" json:"inputSchema,omitempty"`
+	InputExample  map[string]any `bson:"input_example,omitempty" json:"inputExample,omitempty"`
 	OutputSchema  map[string]any `bson:"output_schema,omitempty" json:"outputSchema,omitempty"`
 	LatencyMs     int            `bson:"latency_ms" json:"latencyMs"`
 	Auth          map[string]any `bson:"auth,omitempty" json:"auth,omitempty"`
+	Endpoint      string         `bson:"endpoint,omitempty" json:"endpoint,omitempty"`
+	Method        string         `bson:"method,omitempty" json:"method,omitempty"`
 	Capabilities  []string       `bson:"capabilities,omitempty" json:"capabilities,omitempty"`
 	Reputation    float64        `bson:"reputation" json:"reputation"`
 	Availability  float64        `bson:"availability" json:"availability"`
@@ -369,8 +374,7 @@ func SkillsExecuteHandler(db *mongo.Database) http.HandlerFunc {
 			"created_at":     time.Now().UTC(),
 		})
 
-		// Demo execution (mock).
-		output, execErr := executeMockSkill(skillID, req.Payload)
+		output, execErr := executeSkill(skillID, manifestDoc.Manifest, req.Payload)
 		if execErr != nil {
 			writeAuditRejection(ctx, db, "execution_failed", req, skillID)
 			_, _ = db.Collection("execution_requests").UpdateOne(ctx, bson.M{"request_id": requestID}, bson.M{"$set": bson.M{"status": "rejected"}})
@@ -465,6 +469,61 @@ func SkillsExecuteHandler(db *mongo.Database) http.HandlerFunc {
 			"output":            output,
 		})
 	}
+}
+
+func executeSkill(skillID string, manifest SkillManifest, payload map[string]any) (map[string]any, error) {
+	if strings.TrimSpace(manifest.Endpoint) != "" {
+		return executeRemoteSkill(skillID, manifest, payload)
+	}
+	return executeMockSkill(skillID, payload)
+}
+
+func executeRemoteSkill(skillID string, manifest SkillManifest, payload map[string]any) (map[string]any, error) {
+	method := strings.ToUpper(strings.TrimSpace(manifest.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+
+	reqBody := map[string]any{
+		"skill_id": skillID,
+		"payload":  payload,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode remote request")
+	}
+
+	req, err := http.NewRequest(method, manifest.Endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("invalid remote endpoint request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("remote skill call failed")
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read remote response")
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("remote skill returned status %d", resp.StatusCode)
+	}
+
+	if len(respBytes) == 0 {
+		return map[string]any{"status": "ok"}, nil
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(respBytes, &parsed); err != nil {
+		return map[string]any{"raw": string(respBytes)}, nil
+	}
+	return parsed, nil
 }
 
 func executeMockSkill(skillID string, payload map[string]any) (map[string]any, error) {

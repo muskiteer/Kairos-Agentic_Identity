@@ -272,7 +272,7 @@ export default function App() {
     }
   };
 
-  const registerAgentSkills = async ({ skillsText, price }) => {
+  const registerAgentSkills = async ({ skillsText, price, endpoint, inputExample }) => {
     if (!identity?.agentId) {
       return { ok: false, error: "Create or load an agent first." };
     }
@@ -295,6 +295,19 @@ export default function App() {
           agent_id: identity.agentId,
           skills,
           price: normalizedPrice,
+          endpoint: String(endpoint || "").trim(),
+          method: "POST",
+          input_example: (() => {
+            const raw = String(inputExample || "").trim();
+            if (!raw) return undefined;
+            try {
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === "object") return parsed;
+            } catch {
+              // fallback below
+            }
+            return { input: raw };
+          })(),
         }),
       });
 

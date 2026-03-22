@@ -19,8 +19,7 @@ func ToolFetchHandler(db *mongo.Database) http.HandlerFunc {
 		}
 
 		tools := []map[string]any{
-			{"name": "crypto_price", "description": "Returns latest crypto price"},
-			{"name": "qr_generate", "description": "Generates QR code payload"},
+			{"name": "weather_api", "description": "Returns weather insights for cities"},
 		}
 		writeJSON(w, http.StatusOK, tools)
 	}

@@ -55,7 +55,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	allowedOrigins := map[string]bool{}
 	originsRaw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	if originsRaw == "" {
-		originsRaw = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:3000,http://127.0.0.1:3000"
+		originsRaw = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:3000,http://127.0.0.1:3000,https://kairos-agentic-identity.vercel.app"
 	}
 
 	allowAll := false

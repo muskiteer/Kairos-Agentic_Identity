@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -72,16 +73,19 @@ type DeveloperSkillSummary struct {
 
 type registerAgentRequest struct {
 	AgentID       string   `json:"agent_id"`
-	PublicKey     string   `json:"public_key"` 		
+	PublicKey     string   `json:"public_key"`
 	Description   string   `json:"description,omitempty"`
 	Role          string   `json:"role,omitempty"`
 	AllowedSkills []string `json:"allowed_skills,omitempty"`
 }
 
 type registerSkillsRequest struct {
-	AgentID string   `json:"agent_id"`
-	Skills  []string `json:"skills"`
-	Price   int      `json:"price"`
+	AgentID      string         `json:"agent_id"`
+	Skills       []string       `json:"skills"`
+	Price        int            `json:"price"`
+	Endpoint     string         `json:"endpoint,omitempty"`
+	Method       string         `json:"method,omitempty"`
+	InputExample map[string]any `json:"input_example,omitempty"`
 }
 
 type requestExecutionPayload struct {
@@ -125,10 +129,20 @@ func deriveCapabilities(skillID string, description string) []string {
 	return out
 }
 
-func buildManifestFromSkillRegistration(skillID string, provider Agent, price int) SkillManifestDoc {
+func buildManifestFromSkillRegistration(skillID string, provider Agent, price int, endpoint string, method string, inputExample map[string]any) SkillManifestDoc {
 	desc := strings.TrimSpace(provider.Description)
 	if desc == "" {
 		desc = "Agent-provided marketplace skill"
+	}
+
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = http.MethodPost
+	}
+
+	endpoint = strings.TrimSpace(endpoint)
+	if inputExample == nil {
+		inputExample = map[string]any{"input": "sample request"}
 	}
 
 	latency := 300
@@ -148,6 +162,9 @@ func buildManifestFromSkillRegistration(skillID string, provider Agent, price in
 			SchemaVersion: "1",
 			LatencyMs:     latency,
 			Auth:          map[string]any{"type": "none"},
+			Endpoint:      endpoint,
+			Method:        method,
+			InputExample:  inputExample,
 			Capabilities:  deriveCapabilities(skillID, desc),
 			Reputation:    0.8,
 			Availability:  0.95,
@@ -277,6 +294,19 @@ func RegisterSkillsHandler(db *mongo.Database) http.HandlerFunc {
 			return
 		}
 
+		req.Endpoint = strings.TrimSpace(req.Endpoint)
+		req.Method = strings.ToUpper(strings.TrimSpace(req.Method))
+		if req.Method == "" {
+			req.Method = http.MethodPost
+		}
+		if req.Endpoint != "" {
+			u, err := url.ParseRequestURI(req.Endpoint)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "endpoint must be a valid http/https URL"})
+				return
+			}
+		}
+
 		normalizedSkills := make([]string, 0, len(req.Skills))
 		seen := map[string]struct{}{}
 		for _, s := range req.Skills {
@@ -323,7 +353,7 @@ func RegisterSkillsHandler(db *mongo.Database) http.HandlerFunc {
 		// Keep the modern manifest marketplace in sync so frontend cards can execute provider offers.
 		manifestColl := db.Collection("skill_manifests")
 		for _, skillID := range normalizedSkills {
-			doc := buildManifestFromSkillRegistration(skillID, agent, req.Price)
+			doc := buildManifestFromSkillRegistration(skillID, agent, req.Price, req.Endpoint, req.Method, req.InputExample)
 			_, err := manifestColl.UpdateOne(
 				ctx,
 				bson.M{"skill_id": doc.SkillID, "provider_agent_id": doc.ProviderAgentID},
