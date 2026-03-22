@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/url"
 	"net/http"
 	"os"
 	"os/signal"
@@ -78,7 +79,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if allowAll {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-		} else if origin != "" && allowedOrigins[origin] {
+		} else if origin != "" && (allowedOrigins[origin] || isKairosVercelPreviewOrigin(origin)) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 		}
@@ -93,4 +94,22 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isKairosVercelPreviewOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	if !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+
+	host := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if host == "kairos-agentic-identity.vercel.app" {
+		return true
+	}
+
+	return strings.HasPrefix(host, "kairos-agentic-identity-") && strings.HasSuffix(host, ".vercel.app")
 }
